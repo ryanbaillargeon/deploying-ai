@@ -10,7 +10,7 @@ import os
 _logs = get_logger(__name__)
 
 load_dotenv(".env")
-load_dotenv(".secrets")
+load_dotenv(".secrets_grassriots")
 
 
 client = OpenAI()
