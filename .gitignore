@@ -27,3 +27,7 @@ deploying-ai-env
 *.jsonl
 *.htm
 *.txt
+05_src/assignment_chat/.env
+
+# ChromaDB persistent storage
+05_src/assignment_chat/src/data/chroma_db/
