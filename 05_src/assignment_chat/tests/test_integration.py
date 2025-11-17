@@ -15,6 +15,7 @@ if src_dir not in sys.path:
 
 from src.core.chat_engine import ChatEngine
 from src.services.api_service import APIService, get_api_tools
+from src.services.semantic_service import get_semantic_tools
 
 
 class TestIntegration(unittest.TestCase):
@@ -32,7 +33,10 @@ class TestIntegration(unittest.TestCase):
     
     def test_tool_definitions_valid(self):
         """Test that tool definitions are valid"""
-        tools = get_api_tools()
+        api_tools = get_api_tools()
+        semantic_tools = get_semantic_tools()
+        tools = api_tools + semantic_tools
+        
         self.assertGreater(len(tools), 0)
         
         for tool in tools:
@@ -177,6 +181,107 @@ class TestAPIServiceIntegration(unittest.TestCase):
         self.assertIn('Python Tutorial', result)
         self.assertIn('Tech Educator', result)
         self.assertIn('watched', result.lower())
+
+
+class TestSemanticServiceIntegration(unittest.TestCase):
+    """Integration tests for semantic service"""
+    
+    def test_semantic_tools_available(self):
+        """Test that semantic tools are available"""
+        tools = get_semantic_tools()
+        
+        tool_names = [tool.name for tool in tools]
+        self.assertIn('search_videos_by_topic', tool_names)
+        self.assertIn('find_similar_videos', tool_names)
+    
+    def test_semantic_tools_in_chat_engine(self):
+        """Test that semantic tools are included in chat engine"""
+        with patch('src.core.chat_engine.get_chat_model') as mock_get_model:
+            mock_model = MagicMock()
+            mock_model_with_tools = MagicMock()
+            mock_model.bind_tools.return_value = mock_model_with_tools
+            mock_get_model.return_value = mock_model
+            
+            engine = ChatEngine()
+            
+            # Check that semantic tools are included
+            tool_names = [tool.name for tool in engine.tools]
+            self.assertIn('search_videos_by_topic', tool_names)
+            self.assertIn('find_similar_videos', tool_names)
+    
+    @patch('src.core.chat_engine.get_chat_model')
+    def test_semantic_tool_execution_flow(self, mock_get_model):
+        """Test semantic tool execution through chat engine"""
+        mock_model = MagicMock()
+        mock_model_with_tools = MagicMock()
+        mock_model.bind_tools.return_value = mock_model_with_tools
+        mock_get_model.return_value = mock_model
+        
+        engine = ChatEngine()
+        
+        # Mock tool call response for semantic search
+        mock_tool_response = MagicMock()
+        mock_tool_response.tool_calls = [
+            {
+                'name': 'search_videos_by_topic',
+                'args': {'query': 'machine learning', 'n_results': 10},
+                'id': 'call_123'
+            }
+        ]
+        
+        # Mock final response
+        mock_final_response = MagicMock()
+        mock_final_response.content = "I found 5 videos about machine learning."
+        mock_final_response.tool_calls = None
+        
+        mock_model_with_tools.invoke.side_effect = [
+            mock_tool_response,
+            mock_final_response
+        ]
+        
+        # Mock tool execution
+        with patch.object(engine, '_handle_tool_calls') as mock_handle:
+            mock_handle.return_value = "I found 5 videos about machine learning."
+            result = engine.process_message("What videos did I watch about machine learning?", [])
+        
+        self.assertIn("machine learning", result.lower())
+    
+    @patch('src.core.chat_engine.get_chat_model')
+    def test_find_similar_videos_tool_execution(self, mock_get_model):
+        """Test find_similar_videos tool execution"""
+        mock_model = MagicMock()
+        mock_model_with_tools = MagicMock()
+        mock_model.bind_tools.return_value = mock_model_with_tools
+        mock_get_model.return_value = mock_model
+        
+        engine = ChatEngine()
+        
+        # Mock tool call response
+        mock_tool_response = MagicMock()
+        mock_tool_response.tool_calls = [
+            {
+                'name': 'find_similar_videos',
+                'args': {'video_id': 'abc123', 'n_results': 5},
+                'id': 'call_456'
+            }
+        ]
+        
+        # Mock final response
+        mock_final_response = MagicMock()
+        mock_final_response.content = "Here are 3 similar videos."
+        mock_final_response.tool_calls = None
+        
+        mock_model_with_tools.invoke.side_effect = [
+            mock_tool_response,
+            mock_final_response
+        ]
+        
+        # Mock tool execution
+        with patch.object(engine, '_handle_tool_calls') as mock_handle:
+            mock_handle.return_value = "Here are 3 similar videos."
+            result = engine.process_message("Find videos similar to abc123", [])
+        
+        self.assertIn("similar", result.lower())
 
 
 if __name__ == '__main__':

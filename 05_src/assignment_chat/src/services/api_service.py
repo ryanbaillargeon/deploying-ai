@@ -5,6 +5,7 @@ import sys
 from typing import Dict, List, Optional
 from datetime import datetime
 from dotenv import load_dotenv
+from pydantic import BaseModel, Field
 
 # Add parent directory to path to import logger
 # From src/services/api_service.py, go up to 05_src level (services -> src -> assignment_chat -> 05_src)
@@ -27,6 +28,64 @@ load_dotenv()
 load_dotenv('.secrets')
 
 logger = get_logger(__name__)
+
+
+# Pydantic models for structured outputs
+class VideoSummaryItem(BaseModel):
+    """Individual video summary item"""
+    title: str
+    channel_name: str
+    video_id: Optional[str] = None
+    duration_formatted: Optional[str] = None
+    watched_at: Optional[str] = None
+    watched_time_ago: Optional[str] = None
+
+
+class VideoListSummary(BaseModel):
+    """Complete video list summary with tone tracking"""
+    videos: List[VideoSummaryItem]
+    total_count: int
+    displayed_count: int
+    tone: str = Field(default="conversational", description="Tone of the response: 'conversational' or 'analytical'")
+    summary_text: str = Field(description="Natural language summary of the video list")
+
+
+class StatisticsSummary(BaseModel):
+    """Statistics summary with tone tracking"""
+    total_videos: int
+    total_channels: int
+    total_watch_events: int
+    total_watch_time_hours: float
+    average_video_duration_seconds: float
+    oldest_watch: Optional[str] = None
+    newest_watch: Optional[str] = None
+    tone: str = Field(default="analytical", description="Tone of the response: 'conversational' or 'analytical'")
+    summary_text: str = Field(description="Natural language summary of the statistics")
+
+
+class VideoDetailsSummary(BaseModel):
+    """Video details summary"""
+    title: str
+    channel_name: str
+    video_id: str
+    description: Optional[str] = None
+    duration_formatted: Optional[str] = None
+    published_at: Optional[str] = None
+    view_count: Optional[int] = None
+    like_count: Optional[int] = None
+    tone: str = Field(default="conversational", description="Tone of the response: 'conversational' or 'analytical'")
+    summary_text: str = Field(description="Natural language summary of the video details")
+
+
+class ChannelDetailsSummary(BaseModel):
+    """Channel details summary"""
+    name: str
+    channel_id: Optional[str] = None
+    video_count: int
+    subscriber_count: Optional[int] = None
+    description: Optional[str] = None
+    tone: str = Field(default="conversational", description="Tone of the response: 'conversational' or 'analytical'")
+    summary_text: str = Field(description="Natural language summary of the channel details")
 
 
 class APIService:
@@ -66,7 +125,8 @@ class APIService:
                 if not videos:
                     return f"I couldn't find any videos from that channel in your recent history."
             
-            return self.transform_video_list(videos)
+            summary = self.transform_video_list(videos)
+            return summary.summary_text
             
         except Exception as e:
             logger.error(f"Error getting recent videos: {e}")
@@ -84,7 +144,8 @@ class APIService:
         """
         try:
             video = self.api_client.get_video_details(video_id)
-            return self.transform_video_details(video)
+            summary = self.transform_video_details(video)
+            return summary.summary_text
         except Exception as e:
             logger.error(f"Error getting video details: {e}")
             if hasattr(e, 'response') and hasattr(e.response, 'status_code') and e.response.status_code == 404:
@@ -100,7 +161,8 @@ class APIService:
         """
         try:
             stats = self.api_client.get_statistics()
-            return self.transform_statistics(stats)
+            summary = self.transform_statistics(stats)
+            return summary.summary_text
         except Exception as e:
             logger.error(f"Error getting statistics: {e}")
             return f"I encountered an issue retrieving your watch history statistics. Please try again later."
@@ -135,7 +197,8 @@ class APIService:
                 name_or_id = channel_name or channel_id or "that channel"
                 return f"I couldn't find {name_or_id} in your watch history."
             
-            return self.transform_channel_details(channel)
+            summary = self.transform_channel_details(channel)
+            return summary.summary_text
             
         except Exception as e:
             logger.error(f"Error getting channel info: {e}")
@@ -144,18 +207,24 @@ class APIService:
                 return f"I couldn't find {name_or_id} in your watch history."
             return f"I encountered an issue retrieving channel information. Please try again later."
     
-    def transform_video_list(self, videos: List[Dict]) -> str:
+    def transform_video_list(self, videos: List[Dict]) -> VideoListSummary:
         """
-        Transform video list to natural language.
+        Transform video list to structured output with natural language summary.
         
         Args:
             videos: List of video dictionaries
             
         Returns:
-            Natural language summary
+            VideoListSummary with structured data and natural language summary
         """
         if not videos:
-            return "You haven't watched any videos recently."
+            return VideoListSummary(
+                videos=[],
+                total_count=0,
+                displayed_count=0,
+                tone="conversational",
+                summary_text="You haven't watched any videos recently."
+            )
         
         count = len(videos)
         summary_parts = []
@@ -166,11 +235,14 @@ class APIService:
         else:
             summary_parts.append(f"You've watched {count} videos recently. Here are some highlights:")
         
-        # List key videos (up to 5)
-        display_count = min(count, 5)
+        # Build video items
+        video_items = []
+        display_count = count  # Show all videos without limit
+        
         for i, video in enumerate(videos[:display_count], 1):
             title = video.get('title', 'Unknown Video')
             channel = video.get('channel_name', 'Unknown Channel')
+            video_id = video.get('video_id')
             watched_at = video.get('watched_at', '')
             duration = video.get('duration_formatted', '')
             
@@ -202,6 +274,15 @@ class APIService:
                 except Exception:
                     time_str = ""
             
+            video_items.append(VideoSummaryItem(
+                title=title,
+                channel_name=channel,
+                video_id=video_id,
+                duration_formatted=duration,
+                watched_at=watched_at,
+                watched_time_ago=time_str if time_str else None
+            ))
+            
             duration_str = f" ({duration})" if duration else ""
             time_str_formatted = f" - watched {time_str}" if time_str else ""
             
@@ -210,29 +291,47 @@ class APIService:
         if count > display_count:
             summary_parts.append(f"... and {count - display_count} more video{'s' if count - display_count != 1 else ''}")
         
-        return "\n".join(summary_parts)
+        return VideoListSummary(
+            videos=video_items,
+            total_count=count,
+            displayed_count=display_count,
+            tone="conversational",
+            summary_text="\n".join(summary_parts)
+        )
     
-    def transform_statistics(self, stats: Dict) -> str:
+    def transform_statistics(self, stats: Dict) -> StatisticsSummary:
         """
-        Transform statistics to natural language.
+        Transform statistics to structured output with natural language summary.
         
         Args:
             stats: Statistics dictionary
             
         Returns:
-            Natural language summary
+            StatisticsSummary with structured data and natural language summary
         """
         total_videos = stats.get('total_videos', 0)
         total_channels = stats.get('total_channels', 0)
         total_watch_events = stats.get('total_watch_events', 0)
         total_hours = stats.get('total_watch_time_hours', 0.0)
         avg_duration = stats.get('average_video_duration_seconds', 0.0)
+        oldest = stats.get('oldest_watch')
+        newest = stats.get('newest_watch')
         
         summary_parts = []
         
         # Opening
         if total_videos == 0:
-            return "Your YouTube watch history appears to be empty."
+            return StatisticsSummary(
+                total_videos=0,
+                total_channels=0,
+                total_watch_events=0,
+                total_watch_time_hours=0.0,
+                average_video_duration_seconds=0.0,
+                oldest_watch=oldest,
+                newest_watch=newest,
+                tone="analytical",
+                summary_text="Your YouTube watch history appears to be empty."
+            )
         
         if total_videos >= 1000:
             summary_parts.append(f"Your YouTube history is quite extensive! You've watched {total_videos:,} unique videos")
@@ -267,8 +366,6 @@ class APIService:
             summary_parts.append(f"You've watched videos a total of {total_watch_events:,} time{'s' if total_watch_events != 1 else ''}")
         
         # Date range
-        oldest = stats.get('oldest_watch')
-        newest = stats.get('newest_watch')
         if oldest and newest:
             try:
                 oldest_dt = datetime.fromisoformat(oldest.replace('Z', '+00:00'))
@@ -277,20 +374,31 @@ class APIService:
             except Exception:
                 pass
         
-        return ". ".join(summary_parts) + "."
+        return StatisticsSummary(
+            total_videos=total_videos,
+            total_channels=total_channels,
+            total_watch_events=total_watch_events,
+            total_watch_time_hours=total_hours,
+            average_video_duration_seconds=avg_duration,
+            oldest_watch=oldest,
+            newest_watch=newest,
+            tone="analytical",
+            summary_text=". ".join(summary_parts) + "."
+        )
     
-    def transform_video_details(self, video: Dict) -> str:
+    def transform_video_details(self, video: Dict) -> VideoDetailsSummary:
         """
-        Transform video details to natural language.
+        Transform video details to structured output with natural language summary.
         
         Args:
             video: Video dictionary
             
         Returns:
-            Natural language summary
+            VideoDetailsSummary with structured data and natural language summary
         """
         title = video.get('title', 'Unknown Video')
         channel = video.get('channel_name', 'Unknown Channel')
+        video_id = video.get('video_id', '')
         description = video.get('description', '')
         duration = video.get('duration_formatted', '')
         published_at = video.get('published_at', '')
@@ -319,19 +427,31 @@ class APIService:
             if like_count:
                 summary_parts.append(f"and {like_count:,} likes")
         
-        return ". ".join(summary_parts) + "."
+        return VideoDetailsSummary(
+            title=title,
+            channel_name=channel,
+            video_id=video_id,
+            description=description if description else None,
+            duration_formatted=duration if duration else None,
+            published_at=published_at if published_at else None,
+            view_count=view_count,
+            like_count=like_count,
+            tone="conversational",
+            summary_text=". ".join(summary_parts) + "."
+        )
     
-    def transform_channel_details(self, channel: Dict) -> str:
+    def transform_channel_details(self, channel: Dict) -> ChannelDetailsSummary:
         """
-        Transform channel details to natural language.
+        Transform channel details to structured output with natural language summary.
         
         Args:
             channel: Channel dictionary
             
         Returns:
-            Natural language summary
+            ChannelDetailsSummary with structured data and natural language summary
         """
         name = channel.get('name', 'Unknown Channel')
+        channel_id = channel.get('channel_id')
         video_count = channel.get('video_count', 0)
         subscriber_count = channel.get('subscriber_count')
         description = channel.get('description', '')
@@ -355,7 +475,15 @@ class APIService:
             else:
                 summary_parts.append(f"which has {subscriber_count:,} subscribers")
         
-        return ". ".join(summary_parts) + "."
+        return ChannelDetailsSummary(
+            name=name,
+            channel_id=channel_id,
+            video_count=video_count,
+            subscriber_count=subscriber_count,
+            description=description if description else None,
+            tone="conversational",
+            summary_text=". ".join(summary_parts) + "."
+        )
 
 
 # Initialize service instance for tools

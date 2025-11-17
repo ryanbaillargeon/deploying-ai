@@ -10,6 +10,16 @@ Phase 0 establishes the foundation by setting up the project structure, creating
 
 Phase 1 implements a chat interface that calls the YouTube History API and transforms structured JSON responses into natural, conversational language summaries. The service uses LangChain for LLM integration and supports both local models (via LM Studio) and online models (OpenAI).
 
+## Phase 2: Service 2 - Semantic Query Service
+
+Phase 2 implements semantic search capabilities that enable users to find videos by meaning, topics, and concepts rather than just keywords. The service uses ChromaDB vector similarity search to find relevant videos based on semantic similarity. It supports:
+
+- **Topic-based search**: Find videos about specific topics (e.g., "machine learning", "Python tutorials")
+- **Hybrid search**: Combine semantic search with metadata filters (date ranges, channels, duration)
+- **Similar video discovery**: Find videos similar to a specific video you've watched
+
+The semantic service integrates seamlessly with the chat engine as LangChain tools, following the same observability patterns as the API service.
+
 ## Project Structure
 
 ```
@@ -17,7 +27,8 @@ Phase 1 implements a chat interface that calls the YouTube History API and trans
 ├── docs/                          # Project documentation
 ├── src/
 │   ├── services/                  # Service layer
-│   │   └── api_service.py        # API service with transformations
+│   │   ├── api_service.py        # API service with transformations
+│   │   └── semantic_service.py   # Semantic search service with ChromaDB
 │   ├── core/                      # Core functionality
 │   │   ├── model_factory.py      # Model initialization with switching
 │   │   └── chat_engine.py        # LangChain-based chat engine
@@ -32,6 +43,7 @@ Phase 1 implements a chat interface that calls the YouTube History API and trans
 │   ├── test_data_preparation.py  # Phase 0 tests
 │   ├── test_model_factory.py     # Model factory tests
 │   ├── test_api_service.py      # API service tests
+│   ├── test_semantic_service.py # Semantic service tests
 │   ├── test_chat_engine.py       # Chat engine tests
 │   └── test_integration.py      # Integration tests
 ├── .env.example                   # Environment variable template
@@ -264,6 +276,41 @@ The following LangChain tools are available:
 - `get_statistics`: Get overall watch history statistics
 - `get_channel_info`: Get information about a specific channel
 
+## Semantic Service
+
+The `SemanticService` provides semantic search capabilities over YouTube history using ChromaDB. It's integrated as LangChain tools that the chat engine can use:
+
+```python
+from src.services.semantic_service import SemanticService
+
+service = SemanticService()
+
+# Search videos by topic
+results = service.search_by_topic('machine learning', n_results=10)
+
+# Hybrid search with filters
+results = service.hybrid_search(
+    query='Python tutorials',
+    n_results=10,
+    date_from='2025-01-01',
+    date_to='2025-01-31',
+    channel_name='Tech Educator'
+)
+
+# Find similar videos
+results = service.find_similar_videos('video_id', n_results=5)
+
+# Format results as natural language
+formatted = service.format_results(results)
+```
+
+### Semantic Tools
+
+The following LangChain tools are available for semantic search:
+
+- `search_videos_by_topic`: Search for videos by topic, subject, or theme using semantic search. Supports optional filters for date ranges and channels.
+- `find_similar_videos`: Find videos similar to a specific video based on semantic similarity.
+
 ## API Client
 
 The `YouTubeHistoryAPIClient` provides methods for interacting with the YouTube History API:
@@ -415,14 +462,41 @@ Assistant: "Tech Educator is a channel focused on educational technology content
 You've watched 50 videos from this channel, which has 100.0 thousand subscribers."
 ```
 
+**Semantic Search:**
+```
+User: "What videos did I watch about machine learning?"
+Assistant: "I found 15 videos about machine learning in your history. Here are some highlights:
+1. Introduction to Neural Networks from Tech Educator (watched 2 weeks ago) [relevance: 0.92]
+2. Deep Learning Tutorial from Data Science Channel (watched 1 month ago) [relevance: 0.88]
+..."
+```
+
+**Hybrid Search:**
+```
+User: "Find me Python tutorials from last month"
+Assistant: "I found 8 Python tutorials from December:
+1. Python Basics from Programming Channel (watched Dec 5) [relevance: 0.91]
+2. Advanced Python from Tech Educator (watched Dec 12) [relevance: 0.87]
+..."
+```
+
+**Similar Videos:**
+```
+User: "What videos are similar to [video_id]?"
+Assistant: "Here are 5 videos similar to 'Python Tutorial':
+1. Python Advanced Topics from Same Channel (watched 1 week ago) [relevance: 0.89]
+2. Python for Data Science from Different Channel (watched 2 weeks ago) [relevance: 0.85]
+..."
+```
+
 ## Next Steps
 
-After completing Phase 1:
+After completing Phase 2:
 
-1. Verify the chat interface works correctly
-2. Test tool calling with both local and online models
-3. Verify natural language transformations are working
-4. Proceed to Phase 2: Service 2 - Semantic Query Service
+1. Verify semantic search returns relevant results (>80% relevance)
+2. Test hybrid search with various filter combinations
+3. Verify tool calling works correctly for semantic queries
+4. Proceed to Phase 3: Service 3 - Function Calling Service
 
 ## Notes
 

@@ -23,14 +23,18 @@ logger = get_logger(__name__)
 
 def get_chat_model(model_name: Optional[str] = None, 
                    temperature: float = 0.7,
+                   purpose: Optional[str] = None,
                    **kwargs):
     """
     Initialize a chat model with support for local (LM Studio) and online models.
     
     Args:
         model_name: Model identifier (e.g., 'gpt-4o', 'local-model')
-                   If None, reads from USE_LOCAL_LLM env var
+                   If None, checks purpose-specific env var (e.g., CHAT_MODEL, EVALUATION_MODEL)
+                   then falls back to OPENAI_MODEL or LOCAL_MODEL_NAME
         temperature: Model temperature
+        purpose: Optional description of what this model is used for (e.g., "chat", "evaluation", "enhancement")
+                 Used to check purpose-specific environment variables
         **kwargs: Additional model parameters
         
     Returns:
@@ -39,14 +43,52 @@ def get_chat_model(model_name: Optional[str] = None,
     Raises:
         ValueError: If OPENAI_API_KEY is not set for online models
     """
-    use_local = os.getenv("USE_LOCAL_LLM", "false").lower() == "true"
+    # Check for purpose-specific model name first
+    if model_name is None and purpose:
+        purpose_env_var = f"{purpose.upper()}_MODEL"  # e.g., "CHAT_MODEL", "EVALUATION_MODEL"
+        purpose_model = os.getenv(purpose_env_var)
+        if purpose_model:
+            model_name = purpose_model
     
-    if use_local or (model_name and "local" in model_name.lower()):
+    # Known OpenAI model names (these will use online mode unless forced to local)
+    known_openai_models = {
+        "gpt-4o", "gpt-4o-mini", "gpt-4", "gpt-4-turbo", "gpt-3.5-turbo",
+        "gpt-4o-2024-08-06", "gpt-4-turbo-2024-04-09", "gpt-3.5-turbo-0125"
+    }
+    
+    # Check if model name is a known OpenAI model
+    is_known_openai_model = model_name and model_name.lower() in {m.lower() for m in known_openai_models}
+    
+    # Check for purpose-specific local flag first (e.g., USE_LOCAL_CHAT, USE_LOCAL_EVALUATION)
+    purpose_local_override = None
+    if purpose:
+        purpose_local_flag = f"USE_LOCAL_{purpose.upper()}"  # e.g., "USE_LOCAL_CHAT"
+        purpose_local = os.getenv(purpose_local_flag)
+        if purpose_local:
+            purpose_local_override = purpose_local.lower() == "true"
+    
+    # Determine if this should be local or online
+    # Priority: 1) purpose-specific flag, 2) model name contains "local", 3) known OpenAI model = online, 4) global USE_LOCAL_LLM
+    if purpose_local_override is not None:
+        # Purpose-specific flag explicitly set
+        use_local = purpose_local_override
+    elif model_name and "local" in model_name.lower():
+        # Model name explicitly indicates local
+        use_local = True
+    elif is_known_openai_model:
+        # Known OpenAI model - use online unless forced
+        use_local = False
+    else:
+        # Fall back to global USE_LOCAL_LLM setting
+        use_local = os.getenv("USE_LOCAL_LLM", "false").lower() == "true"
+    
+    if use_local:
         # Local model via LM Studio
         base_url = os.getenv("LM_STUDIO_BASE_URL", "http://127.0.0.1:1234/v1")
         model_id = model_name or os.getenv("LOCAL_MODEL_NAME", "local-model")
         
-        logger.info(f"Initializing local model: {model_id} at {base_url}")
+        purpose_str = f" ({purpose})" if purpose else ""
+        logger.info(f"Initializing local model{purpose_str}: {model_id} at {base_url}")
         
         # For LM Studio, use just the model name without 'openai:' prefix
         # LM Studio expects the exact model name as shown in its interface
@@ -60,16 +102,29 @@ def get_chat_model(model_name: Optional[str] = None,
         )
     else:
         # Online model (OpenAI)
-        model_id = model_name or os.getenv("OPENAI_MODEL", "gpt-4o")
+        # If model_name is still None, fall back to OPENAI_MODEL
+        # (purpose-specific check already happened above)
+        if model_name is None:
+            model_name = os.getenv("OPENAI_MODEL", "gpt-4o")
+        
+        # Strip any provider prefix if present (e.g., "openai:gpt-4o" -> "gpt-4o")
+        # LangChain's init_chat_model with model_provider="openai" expects just the model name
+        if ':' in model_name:
+            model_id = model_name.split(':', 1)[1]
+        else:
+            model_id = model_name
+        
         api_key = os.getenv("OPENAI_API_KEY")
         
         if not api_key:
             raise ValueError("OPENAI_API_KEY not set. Required for online models.")
         
-        logger.info(f"Initializing online model: {model_id}")
+        purpose_str = f" ({purpose})" if purpose else ""
+        logger.info(f"Initializing online model{purpose_str}: {model_id}")
         
+        # When using model_provider="openai", pass just the model name, not "openai:model_name"
         return init_chat_model(
-            f"openai:{model_id}",
+            model_id,
             model_provider="openai",
             temperature=temperature,
             **kwargs
